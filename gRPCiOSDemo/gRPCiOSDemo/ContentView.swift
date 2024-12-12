@@ -9,7 +9,7 @@ struct ContentView: View {
     // gRPC-related properties
     @State private var eventLoopGroup: EventLoopGroup? = nil
     @State private var channel: GRPCChannel? = nil
-    @State private var call: BidirectionalStreamingCall<Service_ClientMessage, Service_Ping>? = nil
+    @State private var pingPongCall: BidirectionalStreamingCall<Service_ClientMessage, Service_Ping>? = nil
     @State private var friendListenerCall: BidirectionalStreamingCall<Service_FriendListenerMessage, Service_FriendStatusUpdate>? = nil
     
     // Friend List and Status
@@ -99,18 +99,18 @@ struct ContentView: View {
     
     /// **Start the Ping-Pong Communication**
     func startPingPong(client: Service_ServerNIOClient) {
-        let localCall = client.communicate { response in
+        let call = client.communicate { response in
             DispatchQueue.main.async {
                 serverResponse = "📨 Ping from Server: \(response.message)"
                 print("📨 Received Ping: \(response.message)")
             }
             
-            if let call = self.call {
+            if let call = self.pingPongCall {
                 sendPong(call: call)
             }
         }
         
-        self.call = localCall
+        self.pingPongCall = call
         
         // Send ClientHello message to initialize the connection
         var clientHello = Service_ClientHello()
@@ -119,7 +119,7 @@ struct ContentView: View {
         var clientMessage = Service_ClientMessage()
         clientMessage.clientHello = clientHello
         
-        localCall.sendMessage(clientMessage).whenComplete { result in
+        call.sendMessage(clientMessage).whenComplete { result in
             switch result {
             case .success:
                 print("✅ Sent ClientHello message successfully")
@@ -131,13 +131,13 @@ struct ContentView: View {
     
     /// **Start the Friend Listener**
     func startFriendListener(client: Service_ServerNIOClient) {
-        let localCall = client.friendListener { response in
+        let call = client.friendListener { response in
             DispatchQueue.main.async {
                 self.friendStatuses[response.clientID] = response.isOnline
             }
         }
         
-        self.friendListenerCall = localCall
+        self.friendListenerCall = call
         
         // Send FriendList to initialize the friend listener
         var friendList = Service_FriendList()
@@ -146,7 +146,7 @@ struct ContentView: View {
         var friendListenerMessage = Service_FriendListenerMessage()
         friendListenerMessage.friendList = friendList
         
-        localCall.sendMessage(friendListenerMessage).whenComplete { result in
+        call.sendMessage(friendListenerMessage).whenComplete { result in
             switch result {
             case .success:
                 print("✅ Sent FriendList message successfully")
@@ -160,9 +160,9 @@ struct ContentView: View {
     func disconnectFromGRPCServer() {
         DispatchQueue.global().async {
             // Cancel the Ping-Pong call
-            if let call = self.call {
+            if let call = self.pingPongCall {
                 call.cancel(promise: nil)
-                self.call = nil
+                self.pingPongCall = nil
                 print("🔌 Call cancelled successfully")
             }
             
@@ -203,8 +203,13 @@ struct ContentView: View {
     
     /// **Send Pong Message** — This function will send a Pong message as a response to the server's Ping
     func sendPong(call: BidirectionalStreamingCall<Service_ClientMessage, Service_Ping>) {
+//        var pong = Service_Pong()
+//        pong.status = .even // Hardcoding status as .even for now
+        let currentTimeMillis = Int64(Date().timeIntervalSince1970 * 1000)
+        
+        // Determine the status as .even or .odd based on epoch millis % 2
         var pong = Service_Pong()
-        pong.status = .even // Hardcoding status as .even for now
+        pong.status = (currentTimeMillis % 2 == 0) ? .even : .odd
         
         var clientMessage = Service_ClientMessage()
         clientMessage.pong = pong
