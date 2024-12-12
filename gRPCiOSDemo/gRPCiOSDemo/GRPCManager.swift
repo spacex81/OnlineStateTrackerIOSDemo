@@ -3,7 +3,6 @@ import GRPC
 import NIO
 
 final class GRPCManager: ObservableObject {
-    
     // MARK: - Properties
     private var eventLoopGroup: EventLoopGroup?
     private var channel: GRPCChannel?
@@ -14,10 +13,8 @@ final class GRPCManager: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var friendStatuses: [String: Bool] = [:]
     
-    private var friends: [String] = ["713bede9-e9a9-4c96-8038-04e3108ac403", "045bfce2-4859-4ae7-ba1d-82e34d8bb87f"]
-    
     // MARK: - Connect to gRPC Server
-    func connect() {
+    func connect(clientID: String, friends: [String]) {
         DispatchQueue.global().async {
             do {
                 // 1. Create an EventLoopGroup for handling async work
@@ -41,10 +38,10 @@ final class GRPCManager: ObservableObject {
                 }
                 
                 // 🔥 Start Ping-Pong Communication
-                self.startPingPong(client: client)
+                self.startPingPong(client: client, clientID: clientID)
                 
                 // 🔥 Start Friend Listener
-                self.startFriendListener(client: client)
+                self.startFriendListener(client: client, friends: friends)
                 
             } catch {
                 DispatchQueue.main.async {
@@ -55,7 +52,7 @@ final class GRPCManager: ObservableObject {
     }
     
     // MARK: - Start the Ping-Pong Communication
-    private func startPingPong(client: Service_ServerNIOClient) {
+    private func startPingPong(client: Service_ServerNIOClient, clientID: String) {
         let call = client.communicate { response in
             DispatchQueue.main.async {
                 self.serverResponse = "📨 Ping from Server: \(response.message)"
@@ -69,9 +66,8 @@ final class GRPCManager: ObservableObject {
         
         self.pingPongCall = call
         
-        // Send ClientHello message to initialize the connection
         var clientHello = Service_ClientHello()
-        clientHello.clientID = "e6c1a465-2c03-4487-abf5-6f747d18fa7e"
+        clientHello.clientID = clientID
         
         var clientMessage = Service_ClientMessage()
         clientMessage.clientHello = clientHello
@@ -87,7 +83,7 @@ final class GRPCManager: ObservableObject {
     }
     
     // MARK: - Start the Friend Listener
-    private func startFriendListener(client: Service_ServerNIOClient) {
+    private func startFriendListener(client: Service_ServerNIOClient, friends: [String]) {
         let call = client.friendListener { response in
             DispatchQueue.main.async {
                 self.friendStatuses[response.clientID] = response.isOnline
@@ -96,7 +92,6 @@ final class GRPCManager: ObservableObject {
         
         self.friendListenerCall = call
         
-        // Send FriendList to initialize the friend listener
         var friendList = Service_FriendList()
         friendList.friendIds = friends
         
@@ -116,44 +111,22 @@ final class GRPCManager: ObservableObject {
     // MARK: - Disconnect from gRPC Server
     func disconnect() {
         DispatchQueue.global().async {
-            // Cancel the Ping-Pong call
-            if let call = self.pingPongCall {
-                call.cancel(promise: nil)
-                self.pingPongCall = nil
-                print("🔌 Call cancelled successfully")
-            }
+            self.pingPongCall?.cancel(promise: nil)
+            self.pingPongCall = nil
             
-            // Cancel the Friend Listener call
-            if let call = self.friendListenerCall {
-                call.cancel(promise: nil)
-                self.friendListenerCall = nil
-                print("🔌 Friend Listener Call cancelled successfully")
-            }
+            self.friendListenerCall?.cancel(promise: nil)
+            self.friendListenerCall = nil
             
-            // Close the gRPC channel
-            if let channel = self.channel {
-                channel.close().whenComplete { result in
-                    switch result {
-                    case .success:
-                        print("🔌 Channel closed successfully")
-                    case .failure(let error):
-                        print("❌ Failed to close channel: \(error.localizedDescription)")
-                    }
-                }
-                self.channel = nil
-            }
+            self.channel?.close().whenComplete { _ in }
+            self.channel = nil
             
-            // Shutdown the EventLoopGroup
-            if let group = self.eventLoopGroup {
-                try? group.syncShutdownGracefully()
-                print("🔻 EventLoopGroup shutdown successfully")
-                self.eventLoopGroup = nil
-            }
+            try? self.eventLoopGroup?.syncShutdownGracefully()
+            self.eventLoopGroup = nil
             
             DispatchQueue.main.async {
                 self.isConnected = false
                 self.serverResponse = "🔴 Disconnected from gRPC Server"
-                self.friendStatuses = [:] // Reset friend statuses
+                self.friendStatuses = [:]
             }
         }
     }
