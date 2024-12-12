@@ -47,6 +47,7 @@ struct ContentView: View {
                 let request = Service_Empty()
                 let call = client.getAllUserInfo(request)
                 
+                
                 call.response.whenComplete { result in
                     switch result {
                     case .success(let response):
